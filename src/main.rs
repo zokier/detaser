@@ -182,17 +182,17 @@ impl nom::Consumer for TaserConsumer {
                     },
                     nom::IResult::Done(_,header) => {
                         self.headers.push(header);
-                        self.row_length = self.headers.iter().fold(0, |acc, ref hdr| {
-                            match hdr.ttype {
-                                TaserType::FixedStr(len) => acc+len as usize,
-                                TaserType::UInt(len) => acc+len as usize,
-                            }
-                        });
                         match (self.header_count as usize).cmp(&self.headers.len()) {
                             std::cmp::Ordering::Less => {
                                 panic!("Header count mismatch! Expected {}, found {}", self.header_count, self.headers.len())
                             },
                             std::cmp::Ordering::Equal => {
+                                self.row_length = self.headers.iter().fold(0, |acc, ref hdr| {
+                                    match hdr.ttype {
+                                        TaserType::FixedStr(len) => acc+len as usize,
+                                        TaserType::UInt(len) => acc+len as usize,
+                                    }
+                                });
                                 self.state = State::Rows;
                                 nom::ConsumerState::Await(0x1c, self.row_length)
                             },
