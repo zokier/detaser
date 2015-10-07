@@ -1,5 +1,7 @@
 #![feature(negate_unsigned)]
 
+extern crate comm;
+
 #[macro_use]
 extern crate nom;
 use std::str::from_utf8;
@@ -130,14 +132,13 @@ enum State {
     End,
 }
 
-#[derive(Debug)]
-struct TaserConsumer {
+struct TaserConsumer<'a> {
     state: State,
     version: TaserVersion,
     header_count: u32,
     headers: Vec<TaserHeader>,
     row_length: usize,
-    rows: Vec<TaserRow>,
+    row_send: comm::spsc::bounded::Producer<'a, TaserRow>,
 }
 
 fn get_error_code(e: nom::Err) -> u32 {
@@ -149,7 +150,7 @@ fn get_error_code(e: nom::Err) -> u32 {
     }
 }
 
-impl nom::Consumer for TaserConsumer {
+impl<'a> nom::Consumer for TaserConsumer<'a> {
     fn consume(&mut self, input: &[u8]) -> nom::ConsumerState {
         match self.state {
             State::Beginning => {
@@ -207,7 +208,12 @@ impl nom::Consumer for TaserConsumer {
                 match single_row_parser(input, &self.headers, self.row_length) {
                     nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
                     nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,self.row_length),
-                    nom::IResult::Done(_,row) => { self.rows.push(row); nom::ConsumerState::Await(self.row_length, self.row_length)}
+                    nom::IResult::Done(_,row) => {
+                        match self.row_send.send_sync(row) {
+                            Ok(_) => nom::ConsumerState::Await(self.row_length, self.row_length),
+                            Err((_,e)) => nom::ConsumerState::ConsumerError(e as u32),
+                        }
+                    }
                 }
             },
             State::End => { 
@@ -221,12 +227,13 @@ impl nom::Consumer for TaserConsumer {
     }
 
     fn end(&mut self) {
-        println!("{:?}", self);
+        println!("EOF");
     }
 }
 
 fn main() {
+    let (row_send, row_recv) = comm::spsc::bounded::new(10);
     let mut prod = nom::FileProducer::new("sample.tsr", 4).unwrap();
-    let mut cons = TaserConsumer { state: State::Beginning, version: TaserVersion{major:-1, minor:-1}, header_count: 0, headers: Vec::new(), row_length: 0, rows: Vec::new() };
+    let mut cons = TaserConsumer { state: State::Beginning, version: TaserVersion{major:-1, minor:-1}, header_count: 0, headers: Vec::new(), row_length: 0, row_send: row_send};
     cons.run(&mut prod);
 }

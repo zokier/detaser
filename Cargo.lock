@@ -2,8 +2,14 @@
 name = "detaser"
 version = "0.1.0"
 dependencies = [
+ "comm 0.0.1 (git+https://github.com/mahkoh/comm.git)",
  "nom 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "comm"
+version = "0.0.1"
+source = "git+https://github.com/mahkoh/comm.git#a7b96032d56678c9923338345d2c47e8193c83c4"
 
 [[package]]
 name = "nom"

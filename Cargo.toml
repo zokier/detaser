@@ -5,3 +5,4 @@ authors = ["Torste Aikio <zokier@gmail.com>"]
 
 [dependencies]
 nom = "*"
+comm = { git = "https://github.com/mahkoh/comm.git" }
