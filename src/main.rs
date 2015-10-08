@@ -155,6 +155,7 @@ impl<CallBackType: Fn(TaserRow) -> ()> TaserConsumer<CallBackType> {
 }
 
 fn get_error_code(e: nom::Err) -> u32 {
+    println!("get_error_code: {:?}", e);
     match e {
         nom::Err::Code(c) => c,
         nom::Err::Node(c, _) => c,
@@ -234,7 +235,7 @@ impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackT
     }
 
     fn failed(&mut self, error_code: u32) {
-        println!("failed with error code {}", error_code);
+        println!("failed with error code {}, state: {:?}, headers: {:?}", error_code, self.state, self.headers);
     }
 
     fn end(&mut self) {
