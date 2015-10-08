@@ -39,6 +39,11 @@ struct TaserRow {
 named!(magic_parser, tag!("TASR"));
 named!(two_char_u32_parser<u32>, map_res!(take_str!(2), <u32 as std::str::FromStr>::from_str));
 named!(version_parser<TaserVersion>, chain!(major: two_char_u32_parser ~ minor: two_char_u32_parser, || {TaserVersion{major: major, minor: minor}}));
+named!(preamble_parser<(TaserVersion,u32)>, chain!(
+        magic_parser
+        ~ version: version_parser
+        ~ header_count: call!(nom::le_u32),
+        || { (version, header_count) } ));
 named!(single_header_parser<TaserHeader>,
    chain!(
        name: take_str!(16) 
@@ -125,8 +130,6 @@ fn single_row_parser<'a>(input: &'a [u8], headers: &[TaserHeader], row_length: u
 #[derive(Debug)]
 enum State {
     Beginning,
-    Version,
-    HeaderCount,
     Headers,
     Rows,
     End,
@@ -168,24 +171,15 @@ impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackT
     fn consume(&mut self, input: &[u8]) -> nom::ConsumerState {
         match self.state {
             State::Beginning => {
-                match magic_parser(input) {
+                match preamble_parser(input) {
                     nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
-                    nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,4),
-                    nom::IResult::Done(_,_) => { self.state = State::Version; nom::ConsumerState::Await(4,4) }
-                }
-            },
-            State::Version => { 
-                match version_parser(input) {
-                    nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
-                    nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,4),
-                    nom::IResult::Done(_,version) => { self.version = version; self.state = State::HeaderCount; nom::ConsumerState::Await(4,4) }
-                }
-            },
-            State::HeaderCount => { 
-                match nom::le_u32(input) {
-                    nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
-                    nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,4),
-                    nom::IResult::Done(_,hdrcnt) => { self.header_count = hdrcnt; self.state = State::Headers; nom::ConsumerState::Await(4,0x1c) }
+                    nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,12),
+                    nom::IResult::Done(_,(version,header_count)) => {
+                        self.version = version;
+                        self.header_count = header_count;
+                        self.state = State::Headers;
+                        nom::ConsumerState::Await(12, 0x1c)
+                    }
                 }
             },
             State::Headers => { 
