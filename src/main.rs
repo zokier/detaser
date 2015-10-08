@@ -1,4 +1,4 @@
-#![feature(negate_unsigned)]
+#![feature(negate_unsigned,unboxed_closures,core)]
 
 extern crate comm;
 
@@ -132,13 +132,26 @@ enum State {
     End,
 }
 
-struct TaserConsumer<'a> {
+struct TaserConsumer<CallBackType: Fn(TaserRow) -> ()> {
     state: State,
     version: TaserVersion,
     header_count: u32,
     headers: Vec<TaserHeader>,
     row_length: usize,
-    row_send: comm::spsc::bounded::Producer<'a, TaserRow>,
+    row_callback: CallBackType,
+}
+
+impl<CallBackType: Fn(TaserRow) -> ()> TaserConsumer<CallBackType> {
+    fn new(cb: CallBackType) -> TaserConsumer<CallBackType> {
+        TaserConsumer {
+            state: State::Beginning,
+            version: TaserVersion{major:-1, minor:-1},
+            header_count: 0,
+            headers: Vec::new(),
+            row_length: 0,
+            row_callback: cb,
+        }
+    }
 }
 
 fn get_error_code(e: nom::Err) -> u32 {
@@ -150,7 +163,7 @@ fn get_error_code(e: nom::Err) -> u32 {
     }
 }
 
-impl<'a> nom::Consumer for TaserConsumer<'a> {
+impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackType> {
     fn consume(&mut self, input: &[u8]) -> nom::ConsumerState {
         match self.state {
             State::Beginning => {
@@ -209,10 +222,8 @@ impl<'a> nom::Consumer for TaserConsumer<'a> {
                     nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
                     nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,self.row_length),
                     nom::IResult::Done(_,row) => {
-                        match self.row_send.send_sync(row) {
-                            Ok(_) => nom::ConsumerState::Await(self.row_length, self.row_length),
-                            Err((_,e)) => nom::ConsumerState::ConsumerError(e as u32),
-                        }
+                        self.row_callback.call((row,));
+                        nom::ConsumerState::Await(self.row_length, self.row_length)
                     }
                 }
             },
@@ -233,7 +244,20 @@ impl<'a> nom::Consumer for TaserConsumer<'a> {
 
 fn main() {
     let (row_send, row_recv) = comm::spsc::bounded::new(10);
-    let mut prod = nom::FileProducer::new("sample.tsr", 4).unwrap();
-    let mut cons = TaserConsumer { state: State::Beginning, version: TaserVersion{major:-1, minor:-1}, header_count: 0, headers: Vec::new(), row_length: 0, row_send: row_send};
-    cons.run(&mut prod);
+    let consumer_thread = std::thread::spawn(move || {
+        let mut prod = nom::FileProducer::new("sample.tsr", 4).unwrap();
+        let mut cons = TaserConsumer::new(move |row: TaserRow| { row_send.send_sync(row); });
+        cons.run(&mut prod);
+    });
+    let printer_thread = std::thread::spawn(move || {
+        let mut done = false;
+        while !done {
+            match row_recv.recv_sync() {
+                Ok(row) => println!("{:?}", row),
+                Err(e) => done = true
+            }
+        }
+    });
+    consumer_thread.join();
+    printer_thread.join();
 }
