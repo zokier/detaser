@@ -39,8 +39,12 @@ struct TaserRow {
 }
 
 named!(magic_parser, tag!("TASR"));
-named!(two_char_u32_parser<u32>, map_res!(take_str!(2), <u32 as std::str::FromStr>::from_str));
-named!(version_parser<TaserVersion>, chain!(major: two_char_u32_parser ~ minor: two_char_u32_parser, || {TaserVersion{major: major, minor: minor}}));
+named!(two_char_u32_parser<u32>, map_res!(
+        take_str!(2), <u32 as std::str::FromStr>::from_str));
+named!(version_parser<TaserVersion>, chain!(
+        major: two_char_u32_parser
+        ~ minor: two_char_u32_parser,
+        || { TaserVersion { major: major, minor: minor } }));
 named!(preamble_parser<(TaserVersion,u32)>, chain!(
         magic_parser
         ~ version: version_parser
