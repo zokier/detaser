@@ -289,8 +289,10 @@ impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackT
                 let mut blobs_total_len: usize = 0;
                 for field in &mut self.current_row.fields {
                     if let &mut TaserValue::VarStr(VarStr::Position((pos,len))) = field {
-                        //TODO handle invalid utf8, remove unwrap
-                        std::mem::replace(field, TaserValue::VarStr(VarStr::Collected(std::str::from_utf8(&input[pos as usize..(pos+len) as usize]).unwrap().to_string())));
+                        match std::str::from_utf8(&input[pos as usize..(pos+len) as usize]) {
+                            Ok(s) => std::mem::replace(field, TaserValue::VarStr(VarStr::Collected(s.to_string()))),
+                            Err(e) => return nom::ConsumerState::ConsumerError(6)
+                        };
                         blobs_total_len = (pos+len) as usize;
                     }
                 }
