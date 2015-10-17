@@ -70,38 +70,11 @@ named!(single_header_parser<TaserHeader>,
        }
    )
 );
-/*
-named!(_blob_parser<TaserBlob>, alt!(
-    chain!(
-        size: call!(nom::le_u8)
-        ~ length: expr_opt!({
-            if (size & 0b1000_0000) == 0 {
-                Err
-            } else {
-                Ok(size & !0b1000_0000)
-            }
-        })
-        ~ data: take!(length),
-        || { TaserBlob::Inline(data.to_vec()) }
-    )
-    | chain!(
-        pos: call!(nom::le_u64)
-        ~ len: call!(nom::le_u64),
-        || { TaserBlob::Position((pos,len)) }
-    )
-));
-*/
 
 #[derive(Debug)]
 enum VarStr {
     Position((u64,u64)),
     Collected(String),
-}
-
-#[derive(Debug)]
-enum TaserBlob {
-    Position((u64,u64)),
-    Collected(Vec<u8>),
 }
 
 fn inline_varstr_parser(input: &[u8]) -> nom::IResult<&[u8], VarStr> {
@@ -128,26 +101,6 @@ fn inline_varstr_parser(input: &[u8]) -> nom::IResult<&[u8], VarStr> {
     }
 }
 
-fn inline_blob_parser(input: &[u8]) -> nom::IResult<&[u8], TaserBlob> {
-    if input.len() < 16 {
-        nom::IResult::Incomplete(nom::Needed::Size(16))
-    } else {
-        if (input[0] & 0b1000_0000) == 0 {
-            chain!(input,
-                   pos: call!(nom::le_u64)
-                   ~ len: call!(nom::le_u64),
-                   || TaserBlob::Position((pos,len))
-            )
-        } else {
-            let len = input[0] & !0b1000_0000;
-            if len < 16 {
-                nom::IResult::Done(&input[16..], TaserBlob::Collected(input[1..(len+1) as usize].to_vec()))
-            } else {
-                nom::IResult::Error(nom::Err::Code(2))
-            }
-        }
-    }
-}
 
 #[derive(Debug)]
 struct RowConsumer<'a> {
