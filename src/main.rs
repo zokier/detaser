@@ -10,12 +10,14 @@ use nom::Consumer;
 #[derive(Debug)]
 enum TaserType { 
     FixedStr(u32),
+    VarStr,
     UInt(u32),
 }
 
 #[derive(Debug)]
 enum TaserValue { 
     FixedStr(String),
+    VarStr(VarStr),
     UInt(u32),
 }
 
@@ -54,7 +56,13 @@ named!(single_header_parser<TaserHeader>,
            TaserHeader { 
                name: name.trim_matches('\0').to_string(), 
                ttype: match ttype {
-                   b"STRN" => TaserType::FixedStr(typeparam),
+                   b"STRN" => {
+                       if typeparam == 0 {
+                           TaserType::VarStr
+                       } else {
+                           TaserType::FixedStr(typeparam)
+                       }
+                   },
                    b"UINT" => TaserType::UInt(typeparam),
                    _ => panic!("Unmatched ttype"),
                }
@@ -62,6 +70,84 @@ named!(single_header_parser<TaserHeader>,
        }
    )
 );
+/*
+named!(_blob_parser<TaserBlob>, alt!(
+    chain!(
+        size: call!(nom::le_u8)
+        ~ length: expr_opt!({
+            if (size & 0b1000_0000) == 0 {
+                Err
+            } else {
+                Ok(size & !0b1000_0000)
+            }
+        })
+        ~ data: take!(length),
+        || { TaserBlob::Inline(data.to_vec()) }
+    )
+    | chain!(
+        pos: call!(nom::le_u64)
+        ~ len: call!(nom::le_u64),
+        || { TaserBlob::Position((pos,len)) }
+    )
+));
+*/
+
+#[derive(Debug)]
+enum VarStr {
+    Position((u64,u64)),
+    Collected(String),
+}
+
+#[derive(Debug)]
+enum TaserBlob {
+    Position((u64,u64)),
+    Collected(Vec<u8>),
+}
+
+fn inline_varstr_parser(input: &[u8]) -> nom::IResult<&[u8], VarStr> {
+    if input.len() < 16 {
+        nom::IResult::Incomplete(nom::Needed::Size(16))
+    } else {
+        if (input[0] & 0b1000_0000) == 0 {
+            chain!(input,
+                   pos: call!(nom::le_u64)
+                   ~ len: call!(nom::le_u64),
+                   || VarStr::Position((pos,len))
+            )
+        } else {
+            let len = input[0] & !0b1000_0000;
+            if len < 16 {
+                match std::str::from_utf8(&input[1..(len+1) as usize]) {
+                    Ok(s) => nom::IResult::Done(&input[16..], VarStr::Collected(s.to_string())),
+                    Err(e) => nom::IResult::Error(nom::Err::Code(3))
+                }
+            } else {
+                nom::IResult::Error(nom::Err::Code(2))
+            }
+        }
+    }
+}
+
+fn inline_blob_parser(input: &[u8]) -> nom::IResult<&[u8], TaserBlob> {
+    if input.len() < 16 {
+        nom::IResult::Incomplete(nom::Needed::Size(16))
+    } else {
+        if (input[0] & 0b1000_0000) == 0 {
+            chain!(input,
+                   pos: call!(nom::le_u64)
+                   ~ len: call!(nom::le_u64),
+                   || TaserBlob::Position((pos,len))
+            )
+        } else {
+            let len = input[0] & !0b1000_0000;
+            if len < 16 {
+                nom::IResult::Done(&input[16..], TaserBlob::Collected(input[1..(len+1) as usize].to_vec()))
+            } else {
+                nom::IResult::Error(nom::Err::Code(2))
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 struct RowConsumer<'a> {
@@ -74,6 +160,17 @@ impl<'a> nom::Consumer for RowConsumer<'a> {
     fn consume(&mut self, input: &[u8]) -> nom::ConsumerState {
         if self.current_header_idx < self.headers.len() {
             match self.headers[self.current_header_idx].ttype {
+                TaserType::VarStr => {
+                    match inline_varstr_parser(input) {
+                        nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                        nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0, 16),
+                        nom::IResult::Done(_,s) => {
+                            self.fields.push(TaserValue::VarStr(s));
+                            self.current_header_idx += 1;
+                            nom::ConsumerState::Await(16, 0)
+                        }
+                    }
+                },
                 TaserType::FixedStr(len) => {
                     match take_str!(input, len) {
                         nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
@@ -121,7 +218,8 @@ fn single_row_parser<'a>(input: &'a [u8], headers: &[TaserHeader], row_length: u
             if row_consumer.fields.len() == headers.len() {
                 nom::IResult::Done(i, TaserRow { fields: row_consumer.fields })
             } else {
-                nom::IResult::Error(nom::Err::Code(1))
+                println!("Wrong field count, row: {:?}", row_consumer.fields);
+                nom::IResult::Error(nom::Err::Code(3))
             }
         }
     }
@@ -132,6 +230,7 @@ enum State {
     Beginning,
     Headers,
     Rows,
+    RowBlobs,
     End,
 }
 
@@ -142,6 +241,7 @@ struct TaserConsumer<CallBackType: Fn(TaserRow) -> ()> {
     headers: Vec<TaserHeader>,
     row_length: usize,
     row_callback: CallBackType,
+    current_row: TaserRow,
 }
 
 impl<CallBackType: Fn(TaserRow) -> ()> TaserConsumer<CallBackType> {
@@ -153,6 +253,7 @@ impl<CallBackType: Fn(TaserRow) -> ()> TaserConsumer<CallBackType> {
             headers: Vec::new(),
             row_length: 0,
             row_callback: cb,
+            current_row: unsafe { std::mem::uninitialized() },
         }
     }
 }
@@ -199,6 +300,7 @@ impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackT
                                 self.row_length = self.headers.iter().fold(0, |acc, ref hdr| {
                                     match hdr.ttype {
                                         TaserType::FixedStr(len) => acc+len as usize,
+                                        TaserType::VarStr => acc+16,
                                         TaserType::UInt(len) => acc+len as usize,
                                     }
                                 });
@@ -217,10 +319,33 @@ impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackT
                     nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
                     nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,self.row_length),
                     nom::IResult::Done(_,row) => {
-                        self.row_callback.call((row,));
-                        nom::ConsumerState::Await(self.row_length, self.row_length)
+                        // self.current_row is std::mem::uninitialized() at this stage
+                        std::mem::forget(std::mem::replace(&mut self.current_row, row));
+                        let mut blobs_total_len: usize = 0;
+                        for field in &self.current_row.fields {
+                            if let &TaserValue::VarStr(VarStr::Position((pos,len))) = field {
+                                blobs_total_len = (pos+len) as usize;
+                            }
+                        }
+                        self.state = State::RowBlobs;
+                        nom::ConsumerState::Await(self.row_length, blobs_total_len)
                     }
                 }
+            },
+            State::RowBlobs => {
+                let mut blobs_total_len: usize = 0;
+                for field in &mut self.current_row.fields {
+                    if let &mut TaserValue::VarStr(VarStr::Position((pos,len))) = field {
+                        //TODO handle invalid utf8, remove unwrap
+                        std::mem::replace(field, TaserValue::VarStr(VarStr::Collected(std::str::from_utf8(&input[pos as usize..(pos+len) as usize]).unwrap().to_string())));
+                        blobs_total_len = (pos+len) as usize;
+                    }
+                }
+                // self.current_row will be initialized when self.state == State::Rows
+                let row = std::mem::replace(&mut self.current_row, unsafe { std::mem::uninitialized() });
+                self.row_callback.call((row,));
+                self.state = State::Rows;
+                nom::ConsumerState::Await(blobs_total_len, self.row_length)
             },
             State::End => { 
                 nom::ConsumerState::ConsumerDone
@@ -243,6 +368,8 @@ fn main() {
         let mut prod = nom::FileProducer::new("sample.tsr", 4).unwrap();
         let mut cons = TaserConsumer::new(move |row: TaserRow| { row_send.send_sync(row); });
         cons.run(&mut prod);
+        //TODO make proper destructor
+        std::mem::forget(std::mem::replace(&mut cons.current_row, TaserRow { fields: Vec::new() }));
     });
     let printer_thread = std::thread::spawn(move || {
         let mut done = false;
