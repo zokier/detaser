@@ -19,7 +19,7 @@ named!(single_header_parser<TaserHeader>,
    chain!(
        name: take_str!(16) 
        ~ take!(4) 
-       ~ ttype: alt!(tag!("STRN") | tag!("UINT"))
+       ~ ttype: alt!(tag!("STRN") | tag!("UINT") | tag!("IINT"))
        ~ typeparam: call!(nom::le_u32),
        || { 
            TaserHeader { 
@@ -33,6 +33,7 @@ named!(single_header_parser<TaserHeader>,
                        }
                    },
                    b"UINT" => TaserType::UInt(typeparam),
+                   b"IINT" => TaserType::Int(typeparam),
                    _ => panic!("Unmatched ttype"),
                }
            }
@@ -107,6 +108,7 @@ impl<CallBackType: Fn(TaserRow) -> ()> nom::Consumer for TaserConsumer<CallBackT
                                         TaserType::FixedStr(len) => acc+len as usize,
                                         TaserType::VarStr => acc+16,
                                         TaserType::UInt(len) => acc+len as usize,
+                                        TaserType::Int(len) => acc+len as usize,
                                     }
                                 });
                                 self.state = State::Rows;

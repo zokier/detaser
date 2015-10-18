@@ -81,14 +81,101 @@ impl<'a> nom::Consumer for RowConsumer<'a> {
                     }
                 },
                 TaserType::UInt(len) => {
-                    match nom::le_u32(input) {
-                        nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
-                        nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,4),
-                        nom::IResult::Done(_,i) => {
-                            self.fields.push(TaserValue::UInt(i));
-                            self.current_header_idx += 1;
-                            nom::ConsumerState::Await(4,0)
-                        }
+                    match len {
+                        1 => {
+                            match nom::le_u8(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::UInt8(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        2 => {
+                            match nom::le_u16(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::UInt16(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        4 => {
+                            match nom::le_u32(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::UInt32(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        8 => {
+                            match nom::le_u64(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::UInt64(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        _ => nom::ConsumerState::ConsumerError(8)
+                    }
+                },
+                TaserType::Int(len) => {
+                    match len {
+                        1 => {
+                            match nom::le_i8(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::Int8(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        2 => {
+                            match nom::le_i16(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::Int16(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        4 => {
+                            match nom::le_i32(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::Int32(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        8 => {
+                            match nom::le_i64(input) {
+                                nom::IResult::Error(a) => nom::ConsumerState::ConsumerError(get_error_code(a)),
+                                nom::IResult::Incomplete(n) => nom::ConsumerState::Await(0,len as usize),
+                                nom::IResult::Done(_,i) => {
+                                    self.fields.push(TaserValue::Int64(i));
+                                    self.current_header_idx += 1;
+                                    nom::ConsumerState::Await(len as usize,0)
+                                }
+                            }
+                        },
+                        _ => nom::ConsumerState::ConsumerError(8)
                     }
                 },
             }
